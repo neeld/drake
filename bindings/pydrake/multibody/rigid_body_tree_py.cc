@@ -499,7 +499,7 @@ PYBIND11_MODULE(rigid_body_tree, m) {
   // This class template does not have documentation.
   py::class_<KinematicsCache<double>>(m, "KinematicsCacheDouble")
     .def("getQ", &KinematicsCache<double>::getQ);
-  py::class_<KinematicsCache<AutoDiffXd> >(m, "KinematicsCacheAutoDiffXd");
+  py::class_<KinematicsCache<AutoDiffXd> >(m, "KinematicsCacheAutoDiffXd")
     .def("getQ", &KinematicsCache<AutoDiffXd>::getQ);
   py::class_<RigidBodyFrame<double>,
              shared_ptr<RigidBodyFrame<double> > >(m, "RigidBodyFrame",
