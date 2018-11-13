@@ -476,7 +476,6 @@ PYBIND11_MODULE(rigid_body_tree, m) {
              type_pack<double, AutoDiffXd>{});
 
   // This class template does not have documentation.
-<<<<<<< HEAD
   py::class_<KinematicsCache<double>>(m, "KinematicsCacheDouble")
     .def("getQ", &KinematicsCache<double>::getQ);
   py::class_<KinematicsCache<AutoDiffXd> >(m, "KinematicsCacheAutoDiffXd")
@@ -514,7 +513,6 @@ PYBIND11_MODULE(rigid_body_tree, m) {
     .def("get_transform_to_body",
          &RigidBodyFrame<double>::get_transform_to_body,
          doc.RigidBodyFrame.get_transform_to_body.doc);
-=======
   py::class_<KinematicsCache<double>>(m, "KinematicsCacheDouble");
   py::class_<KinematicsCache<AutoDiffXd>>(m, "KinematicsCacheAutoDiffXd");
 
@@ -541,8 +539,6 @@ PYBIND11_MODULE(rigid_body_tree, m) {
       .def("get_transform_to_body",
            &RigidBodyFrame<double>::get_transform_to_body,
            doc.RigidBodyFrame.get_transform_to_body.doc);
->>>>>>> upstream/master
-
   m.def("AddModelInstanceFromUrdfFile",
         [](const std::string& urdf_filename,
            const FloatingBaseType floating_base_type,
