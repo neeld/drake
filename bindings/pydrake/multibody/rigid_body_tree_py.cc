@@ -476,43 +476,6 @@ PYBIND11_MODULE(rigid_body_tree, m) {
              type_pack<double, AutoDiffXd>{});
 
   // This class template does not have documentation.
-  py::class_<KinematicsCache<double>>(m, "KinematicsCacheDouble")
-    .def("getQ", &KinematicsCache<double>::getQ);
-  py::class_<KinematicsCache<AutoDiffXd> >(m, "KinematicsCacheAutoDiffXd")
-    .def("getQ", &KinematicsCache<AutoDiffXd>::getQ);
-  py::class_<RigidBodyFrame<double>,
-             shared_ptr<RigidBodyFrame<double> > >(m, "RigidBodyFrame",
-                                                   doc.RigidBodyFrame.doc)
-    .def(
-        py::init<
-            const std::string&,
-            RigidBody<double>*,
-            const Eigen::VectorXd&,
-            const Eigen::VectorXd&>(),
-        py::arg("name"), py::arg("body"),
-        py::arg("xyz") = Eigen::Vector3d::Zero(),
-        py::arg("rpy") = Eigen::Vector3d::Zero(),
-        doc.RigidBodyFrame.ctor.doc_4)
-    .def(
-        py::init<
-            const std::string&,
-            RigidBody<double>*,
-            const Eigen::Isometry3d&>(),
-        py::arg("name"), py::arg("body"),
-        py::arg("transform_to_body"),
-        doc.RigidBodyFrame.ctor.doc_3)
-    .def("get_name", &RigidBodyFrame<double>::get_name,
-        doc.RigidBodyFrame.get_name.doc)
-    .def("get_frame_index", &RigidBodyFrame<double>::get_frame_index,
-        doc.RigidBodyFrame.get_frame_index.doc)
-    .def("get_rigid_body", &RigidBodyFrame<double>::get_rigid_body,
-         py_reference,
-         // Keep alive: `this` keeps `return` alive.
-         py::keep_alive<1, 0>(),
-         doc.RigidBodyFrame.get_rigid_body.doc)
-    .def("get_transform_to_body",
-         &RigidBodyFrame<double>::get_transform_to_body,
-         doc.RigidBodyFrame.get_transform_to_body.doc);
   py::class_<KinematicsCache<double>>(m, "KinematicsCacheDouble");
   py::class_<KinematicsCache<AutoDiffXd>>(m, "KinematicsCacheAutoDiffXd");
 
@@ -539,6 +502,7 @@ PYBIND11_MODULE(rigid_body_tree, m) {
       .def("get_transform_to_body",
            &RigidBodyFrame<double>::get_transform_to_body,
            doc.RigidBodyFrame.get_transform_to_body.doc);
+
   m.def("AddModelInstanceFromUrdfFile",
         [](const std::string& urdf_filename,
            const FloatingBaseType floating_base_type,

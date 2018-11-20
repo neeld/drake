@@ -87,6 +87,12 @@ PYBIND11_MODULE(trajectories, m) {
                       &PiecewisePolynomial<T>::Cubic),
                   py::arg("breaks"), py::arg("knots"), py::arg("periodic_end"),
                   doc.PiecewisePolynomial.Cubic.doc_3)
+      .def("ConcatenateInTime", 
+        [](PiecewisePolynomial<T>& ppt, 
+           const PiecewisePolynomial<T>& other) {
+           ppt.ConcatenateInTime(other);
+          },
+          py::arg("other"))
       .def("value", &PiecewisePolynomial<T>::value,
            doc.PiecewisePolynomial.value.doc)
       .def("derivative", &PiecewisePolynomial<T>::derivative,
