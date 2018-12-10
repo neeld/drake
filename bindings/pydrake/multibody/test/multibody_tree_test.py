@@ -29,6 +29,10 @@ from pydrake.multibody.multibody_tree.multibody_plant import (
 )
 from pydrake.multibody.multibody_tree.parsing import (
     AddModelFromSdfFile,
+    Parser as DeprecatedParser,
+)
+from pydrake.multibody.parsing import (
+    Parser,
 )
 from pydrake.multibody.benchmarks.acrobot import (
     AcrobotParameters,
@@ -46,11 +50,15 @@ from pydrake.systems.framework import DiagramBuilder
 import copy
 import math
 import unittest
+import warnings
 
 from six import text_type as unicode
 import numpy as np
 
 from pydrake.common import FindResourceOrThrow
+from pydrake.common.deprecation import (
+    DrakeDeprecationWarning,
+)
 from pydrake.util.eigen_geometry import Isometry3
 from pydrake.systems.framework import InputPort, OutputPort
 from pydrake.math import RollPitchYaw
@@ -112,8 +120,7 @@ class TestMultibodyTree(unittest.TestCase):
         file_name = FindResourceOrThrow(
             "drake/multibody/benchmarks/acrobot/acrobot.sdf")
         plant = MultibodyPlant(time_step=0.01)
-        model_instance = AddModelFromSdfFile(
-            file_name=file_name, plant=plant)
+        model_instance = Parser(plant).AddModelFromFile(file_name)
         self.assertIsInstance(model_instance, ModelInstanceIndex)
         plant.Finalize()
         benchmark = MakeAcrobotPlant(AcrobotParameters(), True)
@@ -208,23 +215,36 @@ class TestMultibodyTree(unittest.TestCase):
         self.assertIsInstance(joint_actuator.name(), unicode)
         self.assertIsInstance(joint_actuator.joint(), Joint)
 
-    def test_multibody_plant_parsing(self):
-        file_name = FindResourceOrThrow(
+    def test_deprecated_parsing(self):
+        sdf_file = FindResourceOrThrow(
             "drake/multibody/benchmarks/acrobot/acrobot.sdf")
-        plant = MultibodyPlant(time_step=0.01)
-        model_instance = AddModelFromSdfFile(
-            file_name=file_name, plant=plant)
-        self.assertIsInstance(model_instance, ModelInstanceIndex)
 
         plant = MultibodyPlant(time_step=0.01)
-        model_instance = AddModelFromSdfFile(
-            file_name=file_name, model_name="acrobot", plant=plant)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("default", DrakeDeprecationWarning)
+            result = AddModelFromSdfFile(plant=plant, file_name=sdf_file)
+            self.assertIsInstance(result, ModelInstanceIndex)
+            self.assertEqual(len(w), 1)
+
+        plant = MultibodyPlant(time_step=0.01)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("default", DrakeDeprecationWarning)
+            result = DeprecatedParser(plant).AddModelFromFile(sdf_file)
+            self.assertIsInstance(result, ModelInstanceIndex)
+            self.assertEqual(len(w), 1)
+
+        plant = MultibodyPlant(time_step=0.01)
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("default", DrakeDeprecationWarning)
+            result = DeprecatedParser(plant).AddAllModelsFromFile(sdf_file)
+            self.assertIsInstance(result, list)
+            self.assertEqual(len(w), 1)
 
     def test_multibody_tree_kinematics(self):
         file_name = FindResourceOrThrow(
             "drake/examples/double_pendulum/models/double_pendulum.sdf")
         plant = MultibodyPlant()
-        AddModelFromSdfFile(file_name, plant)
+        Parser(plant).AddModelFromFile(file_name)
         plant.Finalize()
         context = plant.CreateDefaultContext()
         tree = plant.tree()
@@ -287,7 +307,7 @@ class TestMultibodyTree(unittest.TestCase):
         file_name = FindResourceOrThrow(
             "drake/multibody/benchmarks/acrobot/acrobot.sdf")
         plant = MultibodyPlant()
-        AddModelFromSdfFile(file_name, plant)
+        Parser(plant).AddModelFromFile(file_name)
         plant.Finalize()
         context = plant.CreateDefaultContext()
         tree = plant.tree()
@@ -344,11 +364,12 @@ class TestMultibodyTree(unittest.TestCase):
             "iiwa_description/sdf/iiwa14_no_collision.sdf")
 
         plant = MultibodyPlant()
+        parser = Parser(plant)
 
-        iiwa_model = AddModelFromSdfFile(
-            file_name=iiwa_sdf_path, model_name='robot', plant=plant)
-        gripper_model = AddModelFromSdfFile(
-            file_name=wsg50_sdf_path, model_name='gripper', plant=plant)
+        iiwa_model = parser.AddModelFromFile(
+            file_name=iiwa_sdf_path, model_name='robot')
+        gripper_model = parser.AddModelFromFile(
+            file_name=wsg50_sdf_path, model_name='gripper')
 
         # Weld the base of arm and gripper to reduce the number of states.
         X_EeGripper = Isometry3.Identity()
@@ -485,11 +506,12 @@ class TestMultibodyTree(unittest.TestCase):
 
         timestep = 0.0002
         plant = MultibodyPlant(timestep)
+        parser = Parser(plant)
 
-        iiwa_model = AddModelFromSdfFile(
-            file_name=iiwa_sdf_path, model_name='robot', plant=plant)
-        gripper_model = AddModelFromSdfFile(
-            file_name=wsg50_sdf_path, model_name='gripper', plant=plant)
+        iiwa_model = parser.AddModelFromFile(
+            file_name=iiwa_sdf_path, model_name='robot')
+        gripper_model = parser.AddModelFromFile(
+            file_name=wsg50_sdf_path, model_name='gripper')
 
         # Weld the base of arm and gripper to reduce the number of states.
         X_EeGripper = Isometry3.Identity()
@@ -564,10 +586,11 @@ class TestMultibodyTree(unittest.TestCase):
         # Python.
         num_joints = 2
         plant = MultibodyPlant()
+        parser = Parser(plant)
         instances = []
         for i in range(num_joints + 1):
-            instance = AddModelFromSdfFile(
-                instance_file, "instance_{}".format(i), plant)
+            instance = parser.AddModelFromFile(
+                instance_file, "instance_{}".format(i))
             instances.append(instance)
         proximal_frame = "base"
         distal_frame = "lower_link"
@@ -602,7 +625,7 @@ class TestMultibodyTree(unittest.TestCase):
         file_name = FindResourceOrThrow(
             "drake/multibody/benchmarks/acrobot/acrobot.sdf")
         plant = MultibodyPlant()
-        AddModelFromSdfFile(file_name, plant)
+        Parser(plant).AddModelFromFile(file_name)
         plant.Finalize()
         context = plant.CreateDefaultContext()
         tree = plant.tree()
@@ -647,10 +670,10 @@ class TestMultibodyTree(unittest.TestCase):
     def test_scene_graph_queries(self):
         builder = DiagramBuilder()
         plant, scene_graph = add_plant_and_scene_graph(builder)
-        AddModelFromSdfFile(
+        parser = Parser(plant=plant, scene_graph=scene_graph)
+        parser.AddModelFromFile(
             FindResourceOrThrow(
-                "drake/bindings/pydrake/multibody/test/two_bodies.sdf"),
-            plant, scene_graph)
+                "drake/bindings/pydrake/multibody/test/two_bodies.sdf"))
         plant.Finalize(scene_graph)
         diagram = builder.Build()
         # The model `two_bodies` has two (implicitly) floating bodies that are
