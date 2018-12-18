@@ -10,10 +10,11 @@
 #include "drake/geometry/frame_kinematics_vector.h"
 #include "drake/geometry/geometry_frame.h"
 #include "drake/geometry/geometry_instance.h"
+#include "drake/geometry/geometry_visualization.h"
 #include "drake/math/orthonormal_basis.h"
 #include "drake/math/rotation_matrix.h"
-#include "drake/multibody/multibody_tree/joints/prismatic_joint.h"
-#include "drake/multibody/multibody_tree/joints/revolute_joint.h"
+#include "drake/multibody/tree/prismatic_joint.h"
+#include "drake/multibody/tree/revolute_joint.h"
 
 namespace drake {
 namespace multibody {
@@ -222,9 +223,14 @@ struct JointLimitsPenaltyParametersEstimator {
 
 template <typename T>
 MultibodyPlant<T>::MultibodyPlant(double time_step)
+    : MultibodyPlant(nullptr, time_step) {}
+
+template <typename T>
+MultibodyPlant<T>::MultibodyPlant(
+    std::unique_ptr<MultibodyTree<T>> tree_in, double time_step)
     : MultibodyTreeSystem<T>(
           systems::SystemTypeTag<multibody::MultibodyPlant>{},
-          nullptr, time_step > 0),
+          std::move(tree_in), time_step > 0),
       time_step_(time_step) {
   DRAKE_THROW_UNLESS(time_step >= 0);
   visual_geometries_.emplace_back();  // Entries for the "world" body.
@@ -258,15 +264,26 @@ geometry::GeometryId MultibodyPlant<T>::RegisterVisualGeometry(
     const Body<T>& body, const Isometry3<double>& X_BG,
     const geometry::Shape& shape, const std::string& name,
     geometry::SceneGraph<T>* scene_graph) {
-  return RegisterVisualGeometry(body, X_BG, shape, name,
-                                geometry::VisualMaterial(), scene_graph);
+  return RegisterVisualGeometry(
+      body, X_BG, shape, name, geometry::IllustrationProperties(), scene_graph);
 }
 
 template <typename T>
 geometry::GeometryId MultibodyPlant<T>::RegisterVisualGeometry(
     const Body<T>& body, const Isometry3<double>& X_BG,
     const geometry::Shape& shape, const std::string& name,
-    const geometry::VisualMaterial& material,
+    const Vector4<double>& diffuse_color,
+    SceneGraph<T>* scene_graph) {
+  return RegisterVisualGeometry(
+      body, X_BG, shape, name,
+      geometry::MakeDrakeVisualizerProperties(diffuse_color), scene_graph);
+}
+
+template <typename T>
+geometry::GeometryId MultibodyPlant<T>::RegisterVisualGeometry(
+    const Body<T>& body, const Isometry3<double>& X_BG,
+    const geometry::Shape& shape, const std::string& name,
+    const geometry::IllustrationProperties& properties,
     SceneGraph<T>* scene_graph) {
   // TODO(SeanCurtis-TRI): Consider simply adding an interface that takes a
   // unique pointer to an already instantiated GeometryInstance. This will
@@ -280,8 +297,8 @@ geometry::GeometryId MultibodyPlant<T>::RegisterVisualGeometry(
   // TODO(amcastro-tri): Consider doing this after finalize so that we can
   // register geometry that has a fixed path to world to the world body (i.e.,
   // as anchored geometry).
-  GeometryId id = RegisterGeometry(body, X_BG, shape, name, material,
-      scene_graph_);
+  GeometryId id = RegisterGeometry(body, X_BG, shape, name, scene_graph_);
+  scene_graph_->AssignRole(*source_id_, id, properties);
   const int visual_index = geometry_id_to_visual_index_.size();
   geometry_id_to_visual_index_[id] = visual_index;
   DRAKE_ASSERT(num_bodies() == static_cast<int>(visual_geometries_.size()));
@@ -305,18 +322,14 @@ geometry::GeometryId MultibodyPlant<T>::RegisterCollisionGeometry(
   DRAKE_THROW_UNLESS(geometry_source_is_registered());
   CheckUserProvidedSceneGraph(scene_graph);
 
-  // We use an "invisible" color with alpha channel set to zero so that
-  // collision geometry does not render on top of visual geometry in our
-  // visualizer.
-  // TODO(amcastro-tri): Remove this "invisible" color once "roles" land in
-  // SceneGraph.
-  const geometry::VisualMaterial invisible_material(
-      Vector4<double>(0.0, 0.0, 0.0, 0.0));
   // TODO(amcastro-tri): Consider doing this after finalize so that we can
   // register geometry that has a fixed path to world to the world body (i.e.,
   // as anchored geometry).
-  GeometryId id = RegisterGeometry(body, X_BG, shape, name, invisible_material,
-      scene_graph_);
+  GeometryId id = RegisterGeometry(body, X_BG, shape, name, scene_graph_);
+  // TODO(SeanCurtis-TRI): Push the contact parameters into the
+  // ProximityProperties.
+  scene_graph_->AssignRole(*source_id_, id, geometry::ProximityProperties());
+
   const int collision_index = geometry_id_to_collision_index_.size();
   geometry_id_to_collision_index_[id] = collision_index;
   DRAKE_ASSERT(
@@ -379,7 +392,6 @@ geometry::GeometryId MultibodyPlant<T>::RegisterGeometry(
     const Body<T>& body, const Isometry3<double>& X_BG,
     const geometry::Shape& shape,
     const std::string& name,
-    const optional<geometry::VisualMaterial>& material,
     SceneGraph<T>* scene_graph) {
   DRAKE_ASSERT(!is_finalized());
   DRAKE_ASSERT(geometry_source_is_registered());
@@ -400,27 +412,13 @@ geometry::GeometryId MultibodyPlant<T>::RegisterGeometry(
   }
 
   // Register geometry in the body frame.
-  std::unique_ptr<geometry::GeometryInstance> geometry_instance;
-  if (material) {
-    geometry_instance = std::make_unique<GeometryInstance>(
-        X_BG, shape.Clone(), name, material.value());
-  } else {
-    geometry_instance =
-        std::make_unique<GeometryInstance>(X_BG, shape.Clone(), name);
-  }
-  GeometryId geometry_id = scene_graph_->RegisterGeometry(
+  std::unique_ptr<geometry::GeometryInstance> geometry_instance =
+      std::make_unique<GeometryInstance>(X_BG, shape.Clone(), name);
+  GeometryId geometry_id = scene_graph->RegisterGeometryWithoutRole(
       source_id_.value(), body_index_to_frame_id_[body.index()],
       std::move(geometry_instance));
   geometry_id_to_body_index_[geometry_id] = body.index();
   return geometry_id;
-}
-
-template<typename T>
-const Isometry3<T>& MultibodyPlant<T>::EvalBodyPoseInWorld(
-    const systems::Context<T>& context,
-    const Body<T>& body_B) const {
-  DRAKE_MBP_THROW_IF_NOT_FINALIZED();
-  return tree().EvalBodyPoseInWorld(context, body_B);
 }
 
 template<typename T>
@@ -450,6 +448,41 @@ void MultibodyPlant<T>::SetFreeBodyPoseInAnchoredFrame(
   // Pose of "body" B in the world frame.
   const Isometry3<T> X_WB = X_WP * X_PF * X_FB;
   SetFreeBodyPoseInWorldFrame(context, body, X_WB);
+}
+
+template<typename T>
+void MultibodyPlant<T>::CalcSpatialAccelerationsFromVdot(
+    const systems::Context<T>& context,
+    const VectorX<T>& known_vdot,
+    std::vector<SpatialAcceleration<T>>* A_WB_array) const {
+  DRAKE_THROW_UNLESS(A_WB_array != nullptr);
+  DRAKE_THROW_UNLESS(static_cast<int>(A_WB_array->size()) == num_bodies());
+  tree().CalcSpatialAccelerationsFromVdot(
+      context, tree().EvalPositionKinematics(context),
+      tree().EvalVelocityKinematics(context), known_vdot, A_WB_array);
+  // Permute BodyNodeIndex -> BodyIndex.
+  // TODO(eric.cousineau): Remove dynamic allocations. Making this in-place
+  // still required dynamic allocation for recording permutation indices.
+  // Can change implementation once MultibodyTree becomes fully internal.
+  std::vector<SpatialAcceleration<T>> A_WB_array_node = *A_WB_array;
+  const MultibodyTreeTopology& topology = tree().get_topology();
+  for (BodyNodeIndex node_index(1);
+       node_index < topology.get_num_body_nodes(); ++node_index) {
+    const BodyIndex body_index = topology.get_body_node(node_index).body;
+    (*A_WB_array)[body_index] = A_WB_array_node[node_index];
+  }
+}
+
+template<typename T>
+void MultibodyPlant<T>::CalcForceElementsContribution(
+      const systems::Context<T>& context,
+      MultibodyForces<T>* forces) const {
+  DRAKE_THROW_UNLESS(forces != nullptr);
+  DRAKE_THROW_UNLESS(forces->CheckHasRightSizeForModel(tree()));
+  tree().CalcForceElementsContribution(
+      context, EvalPositionKinematics(context),
+      EvalVelocityKinematics(context),
+      forces);
 }
 
 template<typename T>

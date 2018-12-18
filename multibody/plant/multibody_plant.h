@@ -12,15 +12,15 @@
 #include "drake/common/nice_type_name.h"
 #include "drake/geometry/geometry_set.h"
 #include "drake/geometry/scene_graph.h"
-#include "drake/multibody/multibody_tree/force_element.h"
-#include "drake/multibody/multibody_tree/joints/weld_joint.h"
-#include "drake/multibody/multibody_tree/multibody_tree.h"
-#include "drake/multibody/multibody_tree/multibody_tree_system.h"
-#include "drake/multibody/multibody_tree/rigid_body.h"
-#include "drake/multibody/multibody_tree/uniform_gravity_field_element.h"
 #include "drake/multibody/plant/contact_results.h"
 #include "drake/multibody/plant/coulomb_friction.h"
 #include "drake/multibody/plant/implicit_stribeck_solver.h"
+#include "drake/multibody/tree/force_element.h"
+#include "drake/multibody/tree/multibody_tree.h"
+#include "drake/multibody/tree/multibody_tree_system.h"
+#include "drake/multibody/tree/rigid_body.h"
+#include "drake/multibody/tree/uniform_gravity_field_element.h"
+#include "drake/multibody/tree/weld_joint.h"
 #include "drake/systems/framework/leaf_system.h"
 #include "drake/systems/framework/scalar_conversion_traits.h"
 
@@ -233,6 +233,14 @@ class MultibodyPlant : public MultibodyTreeSystem<T> {
     FinalizePlantOnly();
   }
 
+  /// Returns the number of Frame objects in this model.
+  /// Frames include body frames associated with each of the bodies,
+  /// including the _world_ body. This means the minimum number of frames is
+  /// one.
+  int num_frames() const {
+    return tree().num_frames();
+  }
+
   /// Returns the number of bodies in the model, including the "world" body,
   /// which is always part of the model.
   /// @see AddRigidBody().
@@ -252,14 +260,19 @@ class MultibodyPlant : public MultibodyTreeSystem<T> {
     return tree().num_actuators();
   }
 
+  /// Returns the number of ForceElement objects.
+  /// @see AddForceElement().
+  int num_force_elements() const {
+    return tree().num_force_elements();
+  }
+
   /// Returns the number of model instances in the model.
   /// @see AddModelInstance().
   int num_model_instances() const {
     return tree().num_model_instances();
   }
 
-  /// Returns the size of the generalized position vector `q` for `this`
-  /// %MultibodyPlant.
+  /// Returns the size of the generalized position vector `q` for this model.
   int num_positions() const { return tree().num_positions(); }
 
   /// Returns the size of the generalized position vector `q` for a specific
@@ -268,8 +281,7 @@ class MultibodyPlant : public MultibodyTreeSystem<T> {
     return tree().num_positions(model_instance);
   }
 
-  /// Returns the size of the generalized velocity vector `v` for `this`
-  /// %MultibodyPlant.
+  /// Returns the size of the generalized velocity vector `v` for this model.
   int num_velocities() const { return tree().num_velocities(); }
 
   /// Returns the size of the generalized velocity vector `v` for a specific
@@ -278,13 +290,10 @@ class MultibodyPlant : public MultibodyTreeSystem<T> {
     return tree().num_velocities(model_instance);
   }
 
-  /// Returns the size of the multibody system state vector `x = [q; v]` for
-  /// `this` %MultibodyPlant. This will equal the number of generalized
-  /// positions (see num_positions()) plus the number of generalized velocities
-  /// (see num_velocities()).
-  /// Notice however that the state of a %MultibodyPlant, stored in its Context,
-  /// can actually contain other variables such as integrated power and discrete
-  /// states.
+  // N.B. The state in the Context may at some point contain values such as
+  // integrated power and other discrete states, hence the specific name.
+  /// Returns the size of the multibody system state vector `x = [q; v]`. This
+  /// will be num_positions() plus num_velocities().
   int num_multibody_states() const { return tree().num_states(); }
 
   /// Returns the total number of actuated degrees of freedom.
@@ -341,6 +350,58 @@ class MultibodyPlant : public MultibodyTreeSystem<T> {
   Eigen::VectorBlock<VectorX<T>> GetMutablePositionsAndVelocities(
       systems::Context<T>* context) const {
     return tree().GetMutablePositionsAndVelocities(context);
+  }
+
+  /// Sets `context` to store the pose `X_WB` of a given `body` B in the world
+  /// frame W.
+  /// @note In general setting the pose and/or velocity of a body in the model
+  /// would involve a complex inverse kinematics problem. This method allows us
+  /// to simplify this process when we know the body is free in space.
+  /// @throws std::exception if `body` is not a free body in the model.
+  /// @throws std::exception if called pre-finalize.
+  void SetFreeBodyPose(
+      systems::Context<T>* context, const Body<T>& body,
+      const Isometry3<T>& X_WB) const {
+    tree().SetFreeBodyPoseOrThrow(body, X_WB, context);
+  }
+
+  /// Sets `state` to store the pose `X_WB` of a given `body` B in the world
+  /// frame W, for a given `context` of `this` model.
+  /// @note In general setting the pose and/or velocity of a body in the model
+  /// would involve a complex inverse kinematics problem. This method allows us
+  /// to simplify this process when we know the body is free in space.
+  /// @throws std::exception if `body` is not a free body in the model.
+  /// @throws std::exception if called pre-finalize.
+  void SetFreeBodyPose(
+      const systems::Context<T>& context, systems::State<T>* state,
+      const Body<T>& body, const Isometry3<T>& X_WB) const {
+    tree().SetFreeBodyPoseOrThrow(body, X_WB, context, state);
+  }
+
+  /// Sets `context` to store the spatial velocity `V_WB` of a given `body` B in
+  /// the world frame W.
+  /// @note In general setting the pose and/or velocity of a body in the model
+  /// would involve a complex inverse kinematics problem. This method allows us
+  /// to simplify this process when we know the body is free in space.
+  /// @throws std::exception if `body` is not a free body in the model.
+  /// @throws std::exception if called pre-finalize.
+  void SetFreeBodySpatialVelocity(
+      systems::Context<T>* context, const Body<T>& body,
+      const SpatialVelocity<T>& V_WB) const {
+    tree().SetFreeBodySpatialVelocityOrThrow(body, V_WB, context);
+  }
+
+  /// Sets `state` to store the spatial velocity `V_WB` of a given `body` B in
+  /// the world frame W, for a given `context` of `this` model.
+  /// @note In general setting the pose and/or velocity of a body in the model
+  /// would involve a complex inverse kinematics problem. This method allows us
+  /// to simplify this process when we know the body is free in space.
+  /// @throws std::exception if `body` is not a free body in the model.
+  /// @throws std::exception if called pre-finalize.
+  void SetFreeBodySpatialVelocity(
+      const systems::Context<T>& context, systems::State<T>* state,
+      const Body<T>& body, const SpatialVelocity<T>& V_WB) const {
+    tree().SetFreeBodySpatialVelocityOrThrow(body, V_WB, context, state);
   }
 
   /// Sets all generalized positions and velocities from the given vector
@@ -808,47 +869,56 @@ class MultibodyPlant : public MultibodyTreeSystem<T> {
     return tree().HasBodyNamed(name, model_instance);
   }
 
-  /// @returns `true` if a joint named `name` was added to the %MultibodyPlant.
+  /// @returns `true` if a frame named `name` was added to the model.
+  /// @see AddFrame().
+  /// @throws std::logic_error if the frame name occurs in multiple model
+  /// instances.
+  bool HasFrameNamed(const std::string& name) const {
+    return tree().HasFrameNamed(name);
+  }
+
+  /// @returns `true` if a frame named `name` was added to @p model_instance.
+  /// @see AddFrame().
+  /// @throws std::exception if @p model_instance is not valid for this model.
+  bool HasFrameNamed(const std::string& name,
+                     ModelInstanceIndex model_instance) const {
+    return tree().HasFrameNamed(name, model_instance);
+  }
+
+  /// @returns `true` if a joint named `name` was added to this model.
   /// @see AddJoint().
-  ///
   /// @throws std::logic_error if the joint name occurs in multiple model
   /// instances.
   bool HasJointNamed(const std::string& name) const {
     return tree().HasJointNamed(name);
   }
 
-  /// @returns `true` if a joint named `name` was added to the %MultibodyPlant
-  /// in @p model_instance.
+  /// @returns `true` if a joint named `name` was added to @p model_instance.
   /// @see AddJoint().
-  ///
   /// @throws std::exception if @p model_instance is not valid for this model.
   bool HasJointNamed(
       const std::string& name, ModelInstanceIndex model_instance) const {
     return tree().HasJointNamed(name, model_instance);
   }
 
-  /// @returns `true` if an actuator named `name` was added to the
-  /// %MultibodyPlant.
+  /// @returns `true` if an actuator named `name` was added to this model.
   /// @see AddJointActuator().
-  ///
   /// @throws std::logic_error if the actuator name occurs in multiple model
   /// instances.
   bool HasJointActuatorNamed(const std::string& name) const {
     return tree().HasJointActuatorNamed(name);
   }
 
-  /// @returns `true` if an actuator named `name` was added to the
-  /// %MultibodyPlant in @p model_instance.
+  /// @returns `true` if an actuator named `name` was added to
+  /// @p model_instance.
   /// @see AddJointActuator().
-  ///
   /// @throws std::exception if @p model_instance is not valid for this model.
   bool HasJointActuatorNamed(
       const std::string& name, ModelInstanceIndex model_instance) const {
     return tree().HasJointActuatorNamed(name, model_instance);
   }
 
-  /// @returns `true` if a model instance named `name` was added to the
-  /// %MultibodyPlant.
+  /// @returns `true` if a model instance named `name` was added to this model.
   /// @see AddModelInstance().
   bool HasModelInstanceNamed(const std::string& name) const {
     return tree().HasModelInstanceNamed(name);
@@ -912,6 +982,31 @@ class MultibodyPlant : public MultibodyTreeSystem<T> {
   const Frame<T>& GetFrameByName(
       const std::string& name, ModelInstanceIndex model_instance) const {
     return tree().GetFrameByName(name, model_instance);
+  }
+
+  /// Returns a constant reference to a rigid body that is identified
+  /// by the string `name` in `this` model.
+  /// @throws std::logic_error if there is no body with the requested name.
+  /// @throws std::logic_error if the body name occurs in multiple model
+  /// instances.
+  /// @throws std::logic_error if the requested body is not a RigidBody.
+  /// @see HasBodyNamed() to query if there exists a body in `this` model with a
+  /// given specified name.
+  const RigidBody<T>& GetRigidBodyByName(const std::string& name) const {
+    return tree().GetRigidBodyByName(name);
+  }
+
+  /// Returns a constant reference to the rigid body that is uniquely identified
+  /// by the string `name` in @p model_instance.
+  /// @throws std::logic_error if there is no body with the requested name.
+  /// @throws std::logic_error if the requested body is not a RigidBody.
+  /// @throws std::runtime_error if @p model_instance is not valid for this
+  ///         model.
+  /// @see HasBodyNamed() to query if there exists a body in `this` model with a
+  /// given specified name.
+  const RigidBody<T>& GetRigidBodyByName(
+      const std::string& name, ModelInstanceIndex model_instance) const {
+    return tree().GetRigidBodyByName(name, model_instance);
   }
 
   /// Returns a constant reference to a joint that is identified
@@ -1001,19 +1096,78 @@ class MultibodyPlant : public MultibodyTreeSystem<T> {
   }
   /// @}
 
-  /// @name Accessing the state
+  /// @name Model instance accessors
+  /// Many of this class's methods expect vectors of tree state or
+  /// joint actuator inputs which encompass the entire tree.  Methods
+  /// in this section are convenience accessors for the portion of
+  /// those vectors which apply to a single model instance only.
+  /// @{
 
-  /// Evaluates the pose `X_WB` of a body B in the world frame W.
-  /// @param[in] context
-  ///   The context storing the state of the multibody system.
-  /// @param[in] body_B
-  ///   The body B for which the pose is requested.
-  /// @retval X_WB
-  ///   The pose of body frame B in the world frame W.
-  /// @throws std::logic_error if called pre-finalize.
-  const Isometry3<T>& EvalBodyPoseInWorld(
-      const systems::Context<T>& context,
-      const Body<T>& body_B) const;
+  /// Given the actuation values `u_instance` for all actuators in
+  /// `model_instance`, this method sets the actuation vector u for the entire
+  /// model to which this actuator belongs to. This method throws
+  /// an exception if the size of `u_instance` is not equal to the number of
+  /// degrees of freedom of all of the actuated joints in `model_instance`.
+  /// @param[in] u_instance Actuation values for the actuators. It must be of
+  ///   size equal to the number of degrees of freedom of all of the actuated
+  ///   joints in `model_instance`.
+  /// @param[out] u
+  ///   The vector containing the actuation values for the entire model.
+  void SetActuationInArray(
+      ModelInstanceIndex model_instance,
+      const Eigen::Ref<const VectorX<T>>& u_instance,
+      EigenPtr<VectorX<T>> u) const {
+    tree().SetActuationInArray(model_instance, u_instance, u);
+  }
+
+  /// Returns a vector of generalized positions for `model_instance` from a
+  /// vector `q_array` of generalized positions for the entire model
+  /// model.  This method throws an exception if `q` is not of size
+  /// MultibodyPlant::num_positions().
+  VectorX<T> GetPositionsFromArray(
+      ModelInstanceIndex model_instance,
+      const Eigen::Ref<const VectorX<T>>& q) const {
+    return tree().GetPositionsFromArray(model_instance, q);
+  }
+
+  /// Sets the vector of generalized positions for `model_instance` in
+  /// `q` using `q_instance`, leaving all other elements in the array
+  /// untouched. This method throws an exception if `q` is not of size
+  /// MultibodyPlant::num_positions() or `q_instance` is not of size
+  /// `MultibodyPlant::num_positions(model_instance)`.
+  void SetPositionsInArray(
+      ModelInstanceIndex model_instance,
+      const Eigen::Ref<const VectorX<T>>& q_instance,
+      EigenPtr<VectorX<T>> q) const {
+    tree().SetPositionsInArray(model_instance, q_instance, q);
+  }
+
+  /// Returns a vector of generalized velocities for `model_instance` from a
+  /// vector `v` of generalized velocities for the entire MultibodyPlant
+  /// model.  This method throws an exception if the input array is not of size
+  /// MultibodyPlant::num_velocities().
+  VectorX<T> GetVelocitiesFromArray(
+      ModelInstanceIndex model_instance,
+      const Eigen::Ref<const VectorX<T>>& v_array) const {
+    return tree().GetVelocitiesFromArray(model_instance, v_array);
+  }
+
+  /// Sets the vector of generalized velocities for `model_instance` in
+  /// `v` using `v_instance`, leaving all other elements in the array
+  /// untouched. This method throws an exception if `v` is not of size
+  /// MultibodyPlant::num_velocities() or `v_instance` is not of size
+  /// `MultibodyPlant::num_positions(model_instance)`.
+  void SetVelocitiesInArray(
+      ModelInstanceIndex model_instance,
+      const Eigen::Ref<const VectorX<T>>& model_v,
+      EigenPtr<VectorX<T>> v_array) const {
+    tree().SetVelocitiesInArray(model_instance, model_v, v_array);
+  }
+
+  /// @}
+
+  /// @name Accessing the state
+  /// @{
 
   /// Sets `context` to store the pose `X_WB` of a given `body` B in the world
   /// frame W.
@@ -1043,6 +1197,834 @@ class MultibodyPlant : public MultibodyTreeSystem<T> {
       systems::Context<T>* context,
       const Frame<T>& frame_F, const Body<T>& body,
       const Isometry3<T>& X_FB) const;
+
+  /// Computes the relative transform `X_AB(q)` from a frame B to a frame A, as
+  /// a function of the generalized positions q of the model.
+  /// That is, the position `p_AQ` of a point Q measured and expressed in
+  /// frame A can be computed from the position `p_BQ` of this point measured
+  /// and expressed in frame B using the transformation `p_AQ = X_AB⋅p_BQ`.
+  ///
+  /// @param[in] context
+  ///   The context containing the state of the model. It stores the
+  ///   generalized positions q of the model.
+  /// @param[in] frame_A
+  ///   The target frame A in the computed relative transform `X_AB`.
+  /// @param[in] frame_B
+  ///   The source frame B in the computed relative transform `X_AB`.
+  /// @retval X_AB
+  ///   The relative transform from frame B to frame A, such that
+  ///   `p_AQ = X_AB⋅p_BQ`.
+  Isometry3<T> CalcRelativeTransform(
+      const systems::Context<T>& context,
+      const Frame<T>& frame_A, const Frame<T>& frame_B) const {
+    return tree().CalcRelativeTransform(context, frame_A, frame_B);
+  }
+
+  /// Given the positions `p_BQi` for a set of points `Qi` measured and
+  /// expressed in a frame B, this method computes the positions `p_AQi(q)` of
+  /// each point `Qi` in the set as measured and expressed in another frame A,
+  /// as a function of the generalized positions q of the model.
+  ///
+  /// @param[in] context
+  ///   The context containing the state of the model. It stores the
+  ///   generalized positions q of the model.
+  /// @param[in] frame_B
+  ///   The frame B in which the positions `p_BQi` of a set of points `Qi` are
+  ///   given.
+  /// @param[in] p_BQi
+  ///   The input positions of each point `Qi` in frame B. `p_BQi ∈ ℝ³ˣⁿᵖ` with
+  ///   `np` the number of points in the set. Each column of `p_BQi` corresponds
+  ///   to a vector in ℝ³ holding the position of one of the points in the set
+  ///   as measured and expressed in frame B.
+  /// @param[in] frame_A
+  ///   The frame A in which it is desired to compute the positions `p_AQi` of
+  ///   each point `Qi` in the set.
+  /// @param[out] p_AQi
+  ///   The output positions of each point `Qi` now computed as measured and
+  ///   expressed in frame A. The output `p_AQi` **must** have the same size as
+  ///   the input `p_BQi` or otherwise this method aborts. That is `p_AQi`
+  ///   **must** be in `ℝ³ˣⁿᵖ`.
+  ///
+  /// @note Both `p_BQi` and `p_AQi` must have three rows. Otherwise this
+  /// method will throw a std::runtime_error exception. This method also throws
+  /// a std::runtime_error exception if `p_BQi` and `p_AQi` differ in the number
+  /// of columns.
+  void CalcPointsPositions(
+      const systems::Context<T>& context,
+      const Frame<T>& frame_B,
+      const Eigen::Ref<const MatrixX<T>>& p_BQi,
+      const Frame<T>& frame_A,
+      EigenPtr<MatrixX<T>> p_AQi) const {
+    return tree().CalcPointsPositions(context, frame_B, p_BQi, frame_A, p_AQi);
+  }
+
+  /// Evaluate the pose `X_WB` of a body B in the world frame W.
+  /// @param[in] context
+  ///   The context storing the state of the model.
+  /// @param[in] body_B
+  ///   The body B for which the pose is requested.
+  /// @retval X_WB
+  ///   The pose of body frame B in the world frame W.
+  /// @throws std::exception if Finalize() was not called on `this` model or if
+  /// `body_B` does not belong to this model.
+  const Isometry3<T>& EvalBodyPoseInWorld(
+      const systems::Context<T>& context,
+      const Body<T>& body_B) const {
+    return tree().EvalBodyPoseInWorld(context, body_B);
+  }
+
+  /// Evaluate the spatial velocity `V_WB` of a body B in the world frame W.
+  /// @param[in] context
+  ///   The context storing the state of the model.
+  /// @param[in] body_B
+  ///   The body B for which the spatial velocity is requested.
+  /// @returns V_WB
+  ///   The spatial velocity of body frame B in the world frame W.
+  /// @throws std::exception if Finalize() was not called on `this` model or if
+  /// `body_B` does not belong to this model.
+  const SpatialVelocity<T>& EvalBodySpatialVelocityInWorld(
+      const systems::Context<T>& context,
+      const Body<T>& body_B) const {
+    return tree().EvalBodySpatialVelocityInWorld(context, body_B);
+  }
+
+  /// Given a list of points with fixed position vectors `p_FP` in a frame
+  /// F, (that is, their time derivative `DtF(p_FP)` in frame F is zero),
+  /// this method computes the geometric Jacobian `Jv_WFp` defined by:
+  /// <pre>
+  ///   v_WP(q, v) = Jv_WFp(q)⋅v
+  /// </pre>
+  /// where `v_WP(q, v)` is the translational velocity of point `P` in the
+  /// world frame W and q and v are the vectors of generalized position and
+  /// velocity, respectively.
+  ///
+  /// @param[in] context
+  ///   The context containing the state of the model. It stores the
+  ///   generalized positions q.
+  /// @param[in] frame_F
+  ///   The positions `p_FP` of each point in the input set are measured and
+  ///   expressed in this frame F and are constant (fixed) in this frame.
+  /// @param[in] p_FP_list
+  ///   A matrix with the fixed position of a set of points `P` measured and
+  ///   expressed in `frame_F`.
+  ///   Each column of this matrix contains the position vector `p_FP` for a
+  ///   point `P` measured and expressed in frame F. Therefore this input
+  ///   matrix lives in ℝ³ˣⁿᵖ with `np` the number of points in the set.
+  /// @param[out] p_WP_list
+  ///   The output positions of each point `P` now measured and expressed in
+  //    the world frame W. These positions are computed in the process of
+  ///   computing the geometric Jacobian `J_WP` and therefore external storage
+  ///   must be provided.
+  ///   The output `p_WP_list` **must** have the same size as the input set
+  ///   `p_FP_list` or otherwise this method throws a
+  ///   std::runtime_error exception. That is `p_WP_list` **must** be in
+  ///   `ℝ³ˣⁿᵖ`.
+  /// @param[out] Jv_WFp
+  ///   The geometric Jacobian `Jv_WFp(q)`, function of the generalized
+  ///   positions q only. This Jacobian relates the translational velocity
+  ///   `v_WP` of each point `P` in the input set by: <pre>
+  ///     v_WP(q, v) = Jv_WFp(q)⋅v
+  ///   </pre>
+  ///   so that `v_WP` is a column vector of size `3⋅np` concatenating the
+  ///   velocity of all points `P` in the same order they were given in the
+  ///   input set. Therefore `J_WFp` is a matrix of size `3⋅np x nv`, with `nv`
+  ///   the number of generalized velocities. On input, matrix `J_WFp` **must**
+  ///   have size `3⋅np x nv` or this method throws a std::runtime_error
+  ///   exception.
+  ///
+  /// @throws std::exception if the output `p_WP_list` is nullptr or does not
+  ///  have the same size as the input array `p_FP_list`.
+  /// @throws std::exception if `Jv_WFp` is nullptr or if it does not have the
+  /// appropriate size, see documentation for `Jv_WFp` for details.
+  // TODO(amcastro-tri): provide the Jacobian-times-vector operation, since for
+  // most applications it is all we need and it is more efficient to compute.
+  // TODO(amcastro-tri): Rework this method as per issue #10155.
+  void CalcPointsGeometricJacobianExpressedInWorld(
+      const systems::Context<T>& context,
+      const Frame<T>& frame_F, const Eigen::Ref<const MatrixX<T>>& p_FP_list,
+      EigenPtr<MatrixX<T>> p_WP_list, EigenPtr<MatrixX<T>> Jv_WFp) const {
+    return tree().CalcPointsGeometricJacobianExpressedInWorld(
+        context, frame_F, p_FP_list, p_WP_list, Jv_WFp);
+  }
+
+  /// Computes the bias term `b_WFp` associated with the translational
+  /// acceleration `a_WFp` of a point `P` instantaneously moving with a frame F.
+  /// That is, the translational acceleration of point `P` can be computed as:
+  /// <pre>
+  ///   a_WFp = Jv_WFp(q)⋅v̇ + b_WFp(q, v)
+  /// </pre>
+  /// where `b_WFp = J̇v_WFp(q, v)⋅v`.
+  ///
+  /// This method computes `b_WFp` for each point `P` in `p_FP_list` defined by
+  /// its position `p_FP` in `frame_F`.
+  ///
+  /// @see CalcPointsGeometricJacobianExpressedInWorld() to compute the
+  /// geometric Jacobian `Jv_WFp(q)`.
+  ///
+  /// @param[in] context
+  ///   The context containing the state of the model. It stores the
+  ///   generalized positions q and generalized velocities v.
+  /// @param[in] frame_F
+  ///   Points `P` in the list instantaneously move with this frame.
+  /// @param[in] p_FP_list
+  ///   A matrix with the fixed position of a list of points `P` measured and
+  ///   expressed in `frame_F`.
+  ///   Each column of this matrix contains the position vector `p_FP` for a
+  ///   point `P` measured and expressed in frame F. Therefore this input
+  ///   matrix lives in ℝ³ˣⁿᵖ with `np` the number of points in the list.
+  /// @returns b_WFp
+  ///   The bias term, function of the generalized positions q and the
+  ///   generalized velocities v as stored in `context`.
+  ///   The returned vector has size `3⋅np`, with np the number of points in
+  ///   `p_FP_list`, and concatenates the bias terms for each point `P` in the
+  ///   list in the same order they are specified on input.
+  ///
+  /// @throws std::exception if `p_FP_list` does not have 3 rows.
+  // TODO(amcastro-tri): Rework this method as per issue #10155.
+  VectorX<T> CalcBiasForPointsGeometricJacobianExpressedInWorld(
+      const systems::Context<T>& context,
+      const Frame<T>& frame_F,
+      const Eigen::Ref<const MatrixX<T>>& p_FP_list) const {
+    return tree().CalcBiasForPointsGeometricJacobianExpressedInWorld(
+        context, frame_F, p_FP_list);
+  }
+
+  // TODO(eric.cousineau): Reduce duplicate text between overloads.
+  /// This is a variant to compute the geometric Jacobian `Jv_WFp` for a list of
+  /// points `P` moving with `frame_F`, given that we know the position `p_WP`
+  /// of each point in the list measured and expressed in the world frame W. The
+  /// geometric Jacobian `Jv_WFp` is defined such that: <pre>
+  ///   v_WP(q, v) = Jv_WFp(q)⋅v
+  /// </pre>
+  /// where `v_WP(q, v)` is the translational velocity of point `P` in the
+  /// world frame W and q and v are the vectors of generalized position and
+  /// velocity, respectively. Since the spatial velocity of each
+  /// point `P` is linear in the generalized velocities, the geometric
+  /// Jacobian `Jv_WFp` is a function of the generalized coordinates q only.
+  ///
+  /// @param[in] context
+  ///   The context containing the state of the model. It stores the
+  ///   generalized positions q.
+  /// @param[in] frame_F
+  ///   Points `P` in the list instantaneously move with this frame.
+  /// @param[in] p_WP_list
+  ///   A matrix with the fixed position of a list of points `P` measured and
+  ///   expressed in the world frame W.
+  ///   Each column of this matrix contains the position vector `p_WP` for a
+  ///   point `P` measured and expressed in the world frame W. Therefore this
+  ///   input matrix lives in ℝ³ˣⁿᵖ with `np` the number of points in the list.
+  /// @param[out] Jv_WFp
+  ///   The geometric Jacobian `Jv_WFp(q)`, function of the generalized
+  ///   positions q only. This Jacobian relates the translational velocity
+  ///   `v_WP` of each point `P` in the input list by: <pre>
+  ///     `v_WP(q, v) = Jv_WFp(q)⋅v`
+  ///   </pre>
+  ///   so that `v_WP` is a column vector of size `3⋅np` concatenating the
+  ///   velocity of all points `P` in the same order they were given in the
+  ///   input list. Therefore `J_WP` is a matrix of size `3⋅np x nv`, with `nv`
+  ///   the number of generalized velocities. On input, matrix `J_WP` **must**
+  ///   have size `3⋅np x nv` or this method throws a std::runtime_error
+  ///   exception.
+  ///
+  /// @throws std::exception if `Jv_WFp` is nullptr or if it does not have the
+  /// appropriate size, see documentation for `Jv_WFp` for details.
+  // TODO(amcastro-tri): provide the Jacobian-times-vector operation, since for
+  // most applications it is all we need and it is more efficient to compute.
+  // TODO(amcastro-tri): Rework this method as per issue #10155.
+  void CalcPointsGeometricJacobianExpressedInWorld(
+      const systems::Context<T>& context,
+      const Frame<T>& frame_F, const Eigen::Ref<const MatrixX<T>>& p_WP_list,
+      EigenPtr<MatrixX<T>> Jv_WFp) const {
+    return tree().CalcPointsGeometricJacobianExpressedInWorld(
+        context, frame_F, p_WP_list, Jv_WFp);
+  }
+
+  /// Given a list of points with fixed position vectors `p_FP` in a frame
+  /// F, (that is, their time derivative `DtF(p_FP)` in frame F is zero),
+  /// this method computes the analytical Jacobian `Jq_WFp(q)`.
+  /// The analytical Jacobian `Jq_WFp(q)` is defined by: <pre>
+  ///   Jq_WFp(q) = d(p_WFp(q))/dq
+  /// </pre>
+  /// where `p_WFp(q)` is the position of point P, which moves with frame F, in
+  /// the world frame W.
+  ///
+  /// @param[in] context
+  ///   The context containing the state of the model. It stores the
+  ///   generalized positions q.
+  /// @param[in] frame_F
+  ///   The positions `p_FP` of each point in the input set are measured and
+  ///   expressed in this frame F and are constant (fixed) in this frame.
+  /// @param[in] p_FP_list
+  ///   A matrix with the fixed position of a set of points `P` measured and
+  ///   expressed in `frame_F`.
+  ///   Each column of this matrix contains the position vector `p_FP` for a
+  ///   point `P` measured and expressed in frame F. Therefore this input
+  ///   matrix lives in ℝ³ˣⁿᵖ with `np` the number of points in the set.
+  /// @param[out] p_WP_list
+  ///   The output positions of each point `P` now measured and expressed in
+  //    the world frame W. These positions are computed in the process of
+  ///   computing the geometric Jacobian `J_WP` and therefore external storage
+  ///   must be provided.
+  ///   The output `p_WP_list` **must** have the same size as the input set
+  ///   `p_FP_list` or otherwise this method throws a
+  ///   std::runtime_error exception. That is `p_WP_list` **must** be in
+  ///   `ℝ³ˣⁿᵖ`.
+  /// @param[out] Jq_WFp
+  ///   The analytical Jacobian `Jq_WFp(q)`, function of the generalized
+  ///   positions q only.
+  ///   We stack the positions of each point P in the world frame W into a
+  ///   column vector p_WFp = [p_WFp1; p_WFp2; ...] of size 3⋅np, with np
+  ///   the number of points in p_FP_list. Then the analytical Jacobian is
+  ///   defined as: <pre>
+  ///     Jq_WFp(q) = ∇(p_WFp(q))
+  ///   </pre>
+  ///   with `∇(⋅)` the gradient operator with respect to the generalized
+  ///   positions q. Therefore `Jq_WFp` is a matrix of size `3⋅np x nq`, with
+  ///   `nq` the number of generalized positions. On input, matrix `Jq_WFp`
+  ///   **must** have size `3⋅np x nq` or this method throws a
+  ///   std::runtime_error exception.
+  ///
+  /// @throws std::exception if the output `p_WP_list` is nullptr or does not
+  /// have the same size as the input array `p_FP_list`.
+  /// @throws std::exception if `Jq_WFp` is nullptr or if it does not have the
+  /// appropriate size, see documentation for `Jq_WFp` for details.
+  // TODO(amcastro-tri): provide the Jacobian-times-vector operation, since for
+  // most applications it is all we need and it is more efficient to compute.
+  // TODO(amcastro-tri): Rework this method as per issue #10155.
+  void CalcPointsAnalyticalJacobianExpressedInWorld(
+      const systems::Context<T>& context,
+      const Frame<T>& frame_F, const Eigen::Ref<const MatrixX<T>>& p_FP_list,
+      EigenPtr<MatrixX<T>> p_WP_list, EigenPtr<MatrixX<T>> Jq_WFp) const {
+    tree().CalcPointsAnalyticalJacobianExpressedInWorld(
+        context, frame_F, p_FP_list, p_WP_list, Jq_WFp);
+  }
+
+  /// Given a frame `Fp` defined by shifting a frame F from its origin `Fo` to
+  /// a new origin `P`, this method computes the geometric Jacobian `Jv_WFp`
+  /// for frame `Fp`. The new origin `P` is specified by the position vector
+  /// `p_FP` in frame F. The frame geometric Jacobian `Jv_WFp` is defined by:
+  /// <pre>
+  ///   V_WFp(q, v) = Jv_WFp(q)⋅v
+  /// </pre>
+  /// where `V_WFp(q, v)` is the spatial velocity of frame `Fp` measured and
+  /// expressed in the world frame W and q and v are the vectors of generalized
+  /// position and velocity, respectively.
+  /// The geometric Jacobian `Jv_WFp(q)` is a function of the generalized
+  /// coordinates q only.
+  ///
+  /// @param[in] context
+  ///   The context containing the state of the model. It stores the
+  ///   generalized positions q.
+  /// @param[in] frame_F
+  ///   The position `p_FP` of frame `Fp` is measured and expressed in this
+  ///   frame F.
+  /// @param[in] p_FP
+  ///   The (fixed) position of the origin `P` of frame `Fp` as measured and
+  ///   expressed in frame F.
+  /// @param[out] Jv_WFp
+  ///   The geometric Jacobian `Jv_WFp(q)`, function of the generalized
+  ///   positions q only. This Jacobian relates to the spatial velocity `V_WFp`
+  ///   of frame `Fp` by: <pre>
+  ///     V_WFp(q, v) = Jv_WFp(q)⋅v
+  ///   </pre>
+  ///   Therefore `Jv_WFp` is a matrix of size `6 x nv`, with `nv`
+  ///   the number of generalized velocities. On input, matrix `Jv_WFp` **must**
+  ///   have size `6 x nv` or this method throws an exception. The top rows of
+  ///   this matrix (which can be accessed with Jv_WFp.topRows<3>()) is the
+  ///   Jacobian `Hw_WFp` related to the angular velocity of `Fp` in W by
+  ///   `w_WFp = Hw_WFp⋅v`. The bottom rows of this matrix (which can be
+  ///   accessed with Jv_WFp.bottomRows<3>()) is the Jacobian `Hv_WFp` related
+  ///   to the translational velocity of the origin `P` of frame `Fp` in W by
+  ///   `v_WFpo = Hv_WFp⋅v`. This ordering is consistent with the internal
+  ///   storage of the SpatialVelocity class. Therefore the following operations
+  ///   results in a valid spatial velocity: <pre>
+  ///     SpatialVelocity<double> Jv_WFp_times_v(Jv_WFp * v);
+  ///   </pre>
+  ///
+  /// @throws std::exception if `J_WFp` is nullptr or if it is not of size
+  ///   `6 x nv`.
+  // TODO(amcastro-tri): Rework this method as per issue #10155.
+  void CalcFrameGeometricJacobianExpressedInWorld(
+      const systems::Context<T>& context,
+      const Frame<T>& frame_F, const Eigen::Ref<const Vector3<T>>& p_FP,
+      EigenPtr<MatrixX<T>> Jv_WFp) const {
+    tree().CalcFrameGeometricJacobianExpressedInWorld(
+        context, frame_F, p_FP, Jv_WFp);
+  }
+
+  /// Computes the geometric Jacobian for a point moving with a given frame.
+  /// Consider a point P instantaneously moving with a frame B with position
+  /// `p_BP` in that frame. Frame `Bp` is the frame defined by shifting frame B
+  /// with origin at `Bo` to a new origin at point P. The spatial
+  /// velocity `V_ABp_E` of frame `Bp` measured in a frame A and expressed in a
+  /// frame E relates to the generalized velocities of the system by the
+  /// geometric Jacobian `Jv_ABp_E(q)` by: <pre>
+  ///   V_ABp_E(q, v) = Jv_ABp_E(q)⋅v
+  /// </pre>
+  /// This method computes the geometric Jacobian `Jv_ABp_E(q)`.
+  ///
+  /// @param[in] context
+  ///   The context containing the state of the model. It stores the
+  ///   generalized positions q.
+  /// @param[in] frame_B
+  ///   The position `p_BP` of point P is measured and expressed in this frame.
+  /// @param[in] p_BP
+  ///   The (fixed) position of the origin `P` of frame `Bp` as measured and
+  ///   expressed in frame B.
+  /// @param[in] frame_A
+  ///   The second frame in which the spatial velocity `V_ABp` is measured and
+  ///   expressed.
+  /// @param[in] frame_E
+  ///   Frame in which the velocity V_ABp_E is expressed.
+  /// @param[out] Jv_ABp_E
+  ///   The geometric Jacobian `Jv_ABp_E(q)`, function of the generalized
+  ///   positions q only. This Jacobian relates to the spatial velocity
+  ///   `V_ABp_E` of frame `Bp` in A and expressed in E by: <pre>
+  ///     V_ABp_E(q, v) = Jv_ABp_E(q)⋅v
+  ///   </pre>
+  ///   Therefore `Jv_ABp_E` is a matrix of size `6 x nv`, with `nv`
+  ///   the number of generalized velocities. On input, matrix `Jv_ABp_E`
+  ///   **must** have size `6 x nv` or this method throws an exception.
+  ///   Given a `6 x nv` spatial Jacobian Jv, let Jvr be the `3 x nv`
+  ///   rotational part (top 3 rows) and Jvt be the translational part
+  ///   (bottom 3 rows). These can be obtained as follows: <pre>
+  ///     Jvr_ABp = Jv_ABp.topRows<3>();
+  ///     Jvt_ABp = Jv_ABp.bottomRows<3>();
+  ///   </pre>
+  ///   This ordering is consistent with the internal storage of the
+  ///   SpatialVelocity class. Therefore the following operations results in
+  ///   a valid spatial velocity: <pre>
+  ///     SpatialVelocity<double> V_ABp(Jv_ABp * v);
+  ///   </pre>
+  ///
+  /// @throws std::exception if `J_ABp` is nullptr or if it is not of size
+  ///   `6 x nv`.
+  // TODO(amcastro-tri): Rework this method as per issue #10155.
+  void CalcRelativeFrameGeometricJacobian(
+      const systems::Context<T>& context,
+      const Frame<T>& frame_B, const Eigen::Ref<const Vector3<T>>& p_BP,
+      const Frame<T>& frame_A, const Frame<T>& frame_E,
+      EigenPtr<MatrixX<T>> Jv_ABp_E) const {
+    return tree().CalcRelativeFrameGeometricJacobian(
+        context, frame_B, p_BP, frame_A, frame_E, Jv_ABp_E);
+  }
+
+  /// Given a frame `Fp` defined by shifting a frame F from its origin `Fo` to
+  /// a new origin `P`, this method computes the bias term `Ab_WFp` associated
+  /// with the spatial acceleration `A_WFp` a frame `Fp` instantaneously
+  /// moving with a frame F at a fixed position `p_FP`.
+  /// That is, the spatial acceleration of frame `Fp` can be computed as:
+  /// <pre>
+  ///   A_WFp = Jv_WFp(q)⋅v̇ + Ab_WFp(q, v)
+  /// </pre>
+  /// where `Ab_WFp(q, v) = J̇v_WFp(q, v)⋅v`.
+  ///
+  /// @see CalcFrameGeometricJacobianExpressedInWorld() to compute the
+  /// geometric Jacobian `Jv_WFp(q)`.
+  ///
+  /// @param[in] context
+  ///   The context containing the state of the model. It stores the
+  ///   generalized positions q and generalized velocities v.
+  /// @param[in] frame_F
+  ///   The position `p_FP` of frame `Fp` is measured and expressed in this
+  ///   frame F.
+  /// @param[in] p_FP
+  ///   The (fixed) position of the origin `P` of frame `Fp` as measured and
+  ///   expressed in frame F.
+  /// @returns Ab_WFp
+  ///   The bias term, function of the generalized positions q and the
+  ///   generalized velocities v as stored in `context`.
+  ///   The returned vector is of size 6, with the first three elements related
+  ///   to the bias in angular acceleration and the with the last three elements
+  ///   related to the bias in translational acceleration.
+  /// @note SpatialAcceleration(Ab_WFp) defines a valid SpatialAcceleration.
+  // TODO(amcastro-tri): Rework this method as per issue #10155.
+  Vector6<T> CalcBiasForFrameGeometricJacobianExpressedInWorld(
+      const systems::Context<T>& context,
+      const Frame<T>& frame_F, const Eigen::Ref<const Vector3<T>>& p_FP) const {
+    return tree().CalcBiasForFrameGeometricJacobianExpressedInWorld(
+        context, frame_F, p_FP);
+  }
+
+  /// Computes the Jacobian of spatial velocity for a frame instantaneously
+  /// moving with a specified frame in the model. Consider a point P
+  /// instantaneously moving with a frame B with position `p_BP` in that frame.
+  /// Frame `Bp` is the frame defined by shifting frame B with origin at `Bo` to
+  /// a new origin at point P. The spatial velocity `V_ABp_E` of frame `Bp`
+  /// measured in a frame A and expressed in a frame E can be expressed as:
+  /// <pre>
+  ///   V_ABp_E(q, w) = Jw_ABp_E(q)⋅w
+  /// </pre>
+  /// where w represents
+  ///   * the time derivative of the generalized position vector q̇, if
+  ///     `with_respect_to` is JacobianWrtVariable::kQDot.
+  ///   * the generalized velocity vector v, if `with_respect_to` is
+  ///     JacobianWrtVariable::kV.
+  ///
+  /// This method computes `Jw_ABp_E(q)`.
+  ///
+  /// @param[in] context
+  ///   The context containing the state of the model. It stores the
+  ///   generalized positions q.
+  /// @param[in] with_respect_to
+  ///   Enum indicating whether `Jw_ABp_E` converts generalized velocities or
+  ///   time-derivatives of generalized positions to spatial velocities.
+  /// @param[in] frame_B
+  ///   The position `p_BP` of point P is measured and expressed in this frame.
+  /// @param[in] p_BP
+  ///   The (fixed) position of the origin `P` of frame `Bp` as measured and
+  ///   expressed in frame B.
+  /// @param[in] frame_A
+  ///   The second frame in which the spatial velocity `V_ABp` is measured.
+  /// @param[in] frame_E
+  ///   Frame in which the velocity V_ABp_E, and therefore the Jacobian Jw_ABp_E
+  ///   is expressed.
+  /// @param[out] Jw_ABp_E
+  ///   The Jacobian `Jw_ABp_E(q)`, function of the generalized
+  ///   positions q only. This Jacobian relates to the spatial velocity
+  ///   `V_ABp_E` of frame `Bp` in `A` and expressed in `E` by: <pre>
+  ///     V_ABp_E(q, w) = Jw_ABp_E(q)⋅w </pre>
+  ///   Therefore `Jw_ABp_E` is a matrix of size `6 x nz`, where `nz` is the
+  ///   number of elements in w. On input, matrix `Jv_ABp_E` **must** have size
+  ///   `6 x nz` or this method throws an exception. Given a `6 x nz` Jacobian
+  ///   J, let Jr be the `3 x nz` rotational part (top 3 rows) and Jt be the
+  ///   translational part (bottom 3 rows). These can be obtained as follows:
+  ///   ```
+  ///     Jr_ABp_E = Jw_ABp_E.topRows<3>();
+  ///     Jt_ABp_E = Jw_ABp_E.bottomRows<3>();
+  ///   ```
+  ///   This ordering is consistent with the internal storage of the
+  ///   SpatialVelocity class. Therefore the following operations results in
+  ///   a valid spatial velocity: <pre>
+  ///     SpatialVelocity<double> V_ABp(Jw_ABp * w); </pre>
+  ///
+  /// @throws std::exception if `Jw_ABp_E` is nullptr or if it is not of size
+  ///   `6 x nz`.
+  void CalcJacobianSpatialVelocity(
+      const systems::Context<T>& context,
+      JacobianWrtVariable with_respect_to,
+      const Frame<T>& frame_B, const Eigen::Ref<const Vector3<T>>& p_BP,
+      const Frame<T>& frame_A, const Frame<T>& frame_E,
+      EigenPtr<MatrixX<T>> Jw_ABp_E) const {
+    return tree().CalcJacobianSpatialVelocity(
+        context, with_respect_to, frame_B, p_BP, frame_A, frame_E, Jw_ABp_E);
+  }
+
+  /// Given the state of this model in `context` and a known vector
+  /// of generalized accelerations `known_vdot`, this method computes the
+  /// spatial acceleration `A_WB` for each body as measured and expressed in the
+  /// world frame W.
+  ///
+  /// @param[in] context
+  ///   The context containing the state of this model.
+  /// @param[in] known_vdot
+  ///   A vector with the generalized accelerations for the full model.
+  /// @param[out] A_WB_array
+  ///   A pointer to a valid, non nullptr, vector of spatial accelerations
+  ///   containing the spatial acceleration `A_WB` for each body. It must be of
+  ///   size equal to the number of bodies in the model. On output,
+  ///   entries will be ordered by BodyIndex.
+  /// @throws std::exception if A_WB_array is not of size `num_bodies()`.
+  void CalcSpatialAccelerationsFromVdot(
+      const systems::Context<T>& context,
+      const VectorX<T>& known_vdot,
+      std::vector<SpatialAcceleration<T>>* A_WB_array) const;
+
+  /// Given the state of this model in `context` and a known vector
+  /// of generalized accelerations `vdot`, this method computes the
+  /// set of generalized forces `tau` that would need to be applied in order to
+  /// attain the specified generalized accelerations.
+  /// Mathematically, this method computes: <pre>
+  ///   tau = M(q)v̇ + C(q, v)v - tau_app - ∑ J_WBᵀ(q) Fapp_Bo_W
+  /// </pre>
+  /// where `M(q)` is the model's mass matrix, `C(q, v)v` is the bias
+  /// term containing Coriolis and gyroscopic effects and `tau_app` consists
+  /// of a vector applied generalized forces. The last term is a summation over
+  /// all bodies in the model where `Fapp_Bo_W` is an applied spatial force on
+  /// body B at `Bo` which gets projected into the space of generalized forces
+  /// with the geometric Jacobian `J_WB(q)` which maps generalized velocities
+  /// into body B spatial velocity as `V_WB = J_WB(q)v`.
+  /// This method does not compute explicit expressions for the mass matrix nor
+  /// for the bias term, which would be of at least `O(n²)` complexity, but it
+  /// implements an `O(n)` Newton-Euler recursive algorithm, where n is the
+  /// number of bodies in the model. The explicit formation of the
+  /// mass matrix `M(q)` would require the calculation of `O(n²)` entries while
+  /// explicitly forming the product `C(q, v) * v` could require up to `O(n³)`
+  /// operations (see [Featherstone 1987, §4]), depending on the implementation.
+  /// The recursive Newton-Euler algorithm is the most efficient currently known
+  /// general method for solving inverse dynamics [Featherstone 2008].
+  ///
+  /// @param[in] context
+  ///   The context containing the state of the model.
+  /// @param[in] known_vdot
+  ///   A vector with the known generalized accelerations `vdot` for the full
+  ///   model. Use the provided Joint APIs in order to access entries into this
+  ///   array.
+  /// @param[in] external_forces
+  ///   A set of forces to be applied to the system either as body spatial
+  ///   forces `Fapp_Bo_W` or generalized forces `tau_app`, see MultibodyForces
+  ///   for details.
+  ///
+  /// @returns the vector of generalized forces that would need to be applied to
+  /// the mechanical system in order to achieve the desired acceleration given
+  /// by `known_vdot`.
+  VectorX<T> CalcInverseDynamics(
+      const systems::Context<T>& context,
+      const VectorX<T>& known_vdot,
+      const MultibodyForces<T>& external_forces) const {
+    return tree().CalcInverseDynamics(context, known_vdot, external_forces);
+  }
+
+  /// Computes the combined force contribution of ForceElement objects in the
+  /// model. A ForceElement can apply forces as a spatial force per body or as
+  /// generalized forces, depending on the ForceElement model.
+  /// ForceElement contributions are a function of the state and time only.
+  /// The output from this method can immediately be used as input to
+  /// CalcInverseDynamics() to include the effect of applied forces by force
+  /// elements.
+  ///
+  /// @param[in] context
+  ///   The context containing the state of this model.
+  /// @param[out] forces
+  ///   A pointer to a valid, non nullptr, multibody forces object. On output
+  ///   `forces` will store the forces exerted by all the ForceElement
+  ///   objects in the model.
+  /// @throws std::exception if `forces` is null or not compatible with this
+  ///   model, per MultibodyForces::CheckInvariants().
+  void CalcForceElementsContribution(
+      const systems::Context<T>& context, MultibodyForces<T>* forces) const;
+
+  /// Computes and returns the total potential energy stored in `this` multibody
+  /// model for the configuration given by `context`.
+  /// @param[in] context
+  ///   The context containing the state of the model.
+  /// @returns The total potential energy stored in `this` multibody model.
+  T CalcPotentialEnergy(const systems::Context<T>& context) const {
+    return tree().CalcPotentialEnergy(context);
+  }
+
+  /// Computes and returns the power generated by conservative forces in the
+  /// multibody model. This quantity is defined to be positive when the
+  /// potential energy is decreasing. In other words, if `U(q)` is the potential
+  /// energy as defined by CalcPotentialEnergy(), then the conservative power,
+  /// `Pc`, is `Pc = -U̇(q)`.
+  ///
+  /// @see CalcPotentialEnergy()
+  T CalcConservativePower(const systems::Context<T>& context) const {
+    return tree().CalcConservativePower(context);
+  }
+
+  /// Computes the bias term `C(q, v)v` containing Coriolis and gyroscopic
+  /// effects of the multibody equations of motion: <pre>
+  ///   M(q)v̇ + C(q, v)v = tau_app + ∑ J_WBᵀ(q) Fapp_Bo_W
+  /// </pre>
+  /// where `M(q)` is the multibody model's mass matrix and `tau_app` consists
+  /// of a vector applied generalized forces. The last term is a summation over
+  /// all bodies in the model where `Fapp_Bo_W` is an applied spatial force on
+  /// body B at `Bo` which gets projected into the space of generalized forces
+  /// with the geometric Jacobian `J_WB(q)` which maps generalized velocities
+  /// into body B spatial velocity as `V_WB = J_WB(q)v`.
+  ///
+  /// @param[in] context
+  ///   The context containing the state of the model. It stores the
+  ///   generalized positions q and the generalized velocities v.
+  /// @param[out] Cv
+  ///   On output, `Cv` will contain the product `C(q, v)v`. It must be a valid
+  ///   (non-null) pointer to a column vector in `ℛⁿ` with n the number of
+  ///   generalized velocities (num_velocities()) of the model.
+  ///   This method aborts if Cv is nullptr or if it does not have the
+  ///   proper size.
+  void CalcBiasTerm(
+      const systems::Context<T>& context, EigenPtr<VectorX<T>> Cv) const {
+    tree().CalcBiasTerm(context, Cv);
+  }
+
+  /// Computes the generalized forces `tau_g(q)` due to gravity as a function
+  /// of the generalized positions `q` stored in the input `context`.
+  /// The vector of generalized forces due to gravity `tau_g(q)` is defined such
+  /// that it appears on the right hand side of the equations of motion together
+  /// with any other generalized forces, like so:
+  /// <pre>
+  ///   Mv̇ + C(q, v)v = tau_g(q) + tau_app
+  /// </pre>
+  /// where `tau_app` includes any other generalized forces applied on the
+  /// system.
+  ///
+  /// @param[in] context
+  ///   The context storing the state of the model.
+  /// @returns tau_g
+  ///   A vector containing the generalized forces due to gravity.
+  ///   The generalized forces are consistent with the vector of
+  ///   generalized velocities `v` for `this` so that
+  ///   the inner product `v⋅tau_g` corresponds to the power applied by the
+  ///   gravity forces on the mechanical system. That is, `v⋅tau_g > 0`
+  ///   corresponds to potential energy going into the system, as either
+  ///   mechanical kinetic energy, some other potential energy, or heat, and
+  ///   therefore to a decrease of the gravitational potential energy.
+  VectorX<T> CalcGravityGeneralizedForces(
+      const systems::Context<T>& context) const {
+    return tree().CalcGravityGeneralizedForces(context);
+  }
+
+  // Preserve access to base overload from this class.
+  using systems::System<T>::MapVelocityToQDot;
+
+  /// Transforms generalized velocities v to time derivatives `qdot` of the
+  /// generalized positions vector `q` (stored in `context`). `v` and `qdot`
+  /// are related linearly by `q̇ = N(q)⋅v`.
+  /// Using the configuration `q` stored in the given `context` this method
+  /// calculates `q̇ = N(q)⋅v`.
+  ///
+  /// @param[in] context
+  ///   The context containing the state of the model.
+  /// @param[in] v
+  ///   A vector of of generalized velocities for this model.
+  ///   This method aborts if v is not of size num_velocities().
+  /// @param[out] qdot
+  ///   A valid (non-null) pointer to a vector in `ℝⁿ` with n being the number
+  ///   of generalized positions in this model,
+  ///   given by `num_positions()`. This method aborts if `qdot` is nullptr
+  ///   or if it is not of size num_positions().
+  ///
+  /// @see MapQDotToVelocity()
+  /// @see Mobilizer::MapVelocityToQDot()
+  void MapVelocityToQDot(
+      const systems::Context<T>& context,
+      const Eigen::Ref<const VectorX<T>>& v,
+      EigenPtr<VectorX<T>> qdot) const {
+    return tree().MapVelocityToQDot(context, v, qdot);
+  }
+
+  // Preserve access to base overload from this class.
+  using systems::System<T>::MapQDotToVelocity;
+
+  /// Transforms the time derivative `qdot` of the generalized positions vector
+  /// `q` (stored in `context`) to generalized velocities `v`. `v` and `q̇`
+  /// are related linearly by `q̇ = N(q)⋅v`. Although `N(q)` is not
+  /// necessarily square, its left pseudo-inverse `N⁺(q)` can be used to
+  /// invert that relationship without residual error, provided that `qdot` is
+  /// in the range space of `N(q)` (that is, if it *could* have been produced as
+  /// `q̇ = N(q)⋅v` for some `v`).
+  /// Using the configuration `q` stored in the given `context` this method
+  /// calculates `v = N⁺(q)⋅q̇`.
+  ///
+  /// @param[in] context
+  ///   The context containing the state of the model.
+  /// @param[in] qdot
+  ///   A vector containing the time derivatives of the generalized positions.
+  ///   This method aborts if `qdot` is not of size num_positions().
+  /// @param[out] v
+  ///   A valid (non-null) pointer to a vector in `ℛⁿ` with n the number of
+  ///   generalized velocities. This method aborts if v is nullptr or if it
+  ///   is not of size num_velocities().
+  ///
+  /// @see MapVelocityToQDot()
+  /// @see Mobilizer::MapQDotToVelocity()
+  void MapQDotToVelocity(
+      const systems::Context<T>& context,
+      const Eigen::Ref<const VectorX<T>>& qdot,
+      EigenPtr<VectorX<T>> v) const {
+    tree().MapQDotToVelocity(context, qdot, v);
+  }
+
+  /// This method allows users to map the state of `this` model, x, into a
+  /// vector of selected state xₛ with a given preferred ordering.
+  /// The mapping, or selection, is returned in the form of a selector matrix
+  /// Sx such that `xₛ = Sx⋅x`. The size nₛ of xₛ is always smaller or equal
+  /// than the size of the full state x. That is, a user might be interested in
+  /// only a given portion of the full state x.
+  ///
+  /// This selection matrix is particularly useful when adding PID control
+  /// on a portion of the state, see systems::controllers::PidController.
+  ///
+  /// A user specifies the preferred order in xₛ via `user_to_joint_index_map`.
+  /// The selected state is built such that selected positions are followed
+  /// by selected velocities, as in `xₛ = [qₛ, vₛ]`.
+  /// The positions in qₛ are a concatenation of the positions for each joint
+  /// in the order they appear in `user_to_joint_index_map`. That is, the
+  /// positions for `user_to_joint_index_map[0]` are first, followed by the
+  /// positions for `user_to_joint_index_map[1]`, etc. Similarly for the
+  /// selected velocities vₛ.
+  ///
+  /// @throws std::logic_error if there are repeated indexes in
+  /// `user_to_joint_index_map`.
+  // TODO(amcastro-tri): consider having an extra `free_body_index_map`
+  // so that users could also re-order free bodies if they wanted to.
+  MatrixX<double> MakeStateSelectorMatrix(
+      const std::vector<JointIndex>& user_to_joint_index_map) const {
+    return tree().MakeStateSelectorMatrix(user_to_joint_index_map);
+  }
+
+  /// This method allows user to map a vector `uₛ` containing the actuation
+  /// for a set of selected actuators into the vector u containing the actuation
+  /// values for `this` full model.
+  /// The mapping, or selection, is returned in the form of a selector matrix
+  /// Su such that `u = Su⋅uₛ`. The size nₛ of uₛ is always smaller or equal
+  /// than the size of the full vector of actuation values u. That is, a user
+  /// might be interested in only a given subset of actuators in the model.
+  ///
+  /// This selection matrix is particularly useful when adding PID control
+  /// on a portion of the state, see systems::controllers::PidController.
+  ///
+  /// A user specifies the preferred order in uₛ via
+  /// `user_to_actuator_index_map`. The actuation values in uₛ are a
+  /// concatenation of the values for each actuator in the order they appear in
+  /// `user_to_actuator_index_map`.
+  /// The full vector of actuation values u is ordered by JointActuatorIndex.
+  MatrixX<double> MakeActuatorSelectorMatrix(
+      const std::vector<JointActuatorIndex>& user_to_actuator_index_map) const {
+    return tree().MakeActuatorSelectorMatrix(user_to_actuator_index_map);
+  }
+
+  /// Alternative signature to build an actuation selector matrix `Su` such
+  /// that `u = Su⋅uₛ`, where u is the vector of actuation values for the full
+  /// model (ordered by JointActuatorIndex) and uₛ is a vector of actuation
+  /// values for the actuators acting on the joints listed by
+  /// `user_to_joint_index_map`. It is assumed that all joints referenced by
+  /// `user_to_joint_index_map` are actuated.
+  /// See MakeActuatorSelectorMatrix(const std::vector<JointActuatorIndex>&) for
+  /// details.
+  /// @throws std::logic_error if any of the joints in
+  /// `user_to_joint_index_map` does not have an actuator.
+  MatrixX<double> MakeActuatorSelectorMatrix(
+      const std::vector<JointIndex>& user_to_joint_index_map) const {
+    return tree().MakeActuatorSelectorMatrix(user_to_joint_index_map);
+  }
+
+  /// Performs the computation of the mass matrix `M(q)` of the model using
+  /// inverse dynamics, where the generalized positions q are stored in
+  /// `context`. See CalcInverseDynamics().
+  ///
+  /// @param[in] context
+  ///   The context containing the state of the model.
+  /// @param[out] H
+  ///   A valid (non-null) pointer to a squared matrix in `ℛⁿˣⁿ` with n the
+  ///   number of generalized velocities (num_velocities()) of the model.
+  ///   This method aborts if H is nullptr or if it does not have the proper
+  ///   size.
+  ///
+  /// The algorithm used to build `M(q)` consists in computing one column of
+  /// `M(q)` at a time using inverse dynamics. The result from inverse dynamics,
+  /// with no applied forces, is the vector of generalized forces: <pre>
+  ///   tau = M(q)v̇ + C(q, v)v
+  /// </pre>
+  /// where q and v are the generalized positions and velocities, respectively.
+  /// When `v = 0` the Coriolis and gyroscopic forces term `C(q, v)v` is zero.
+  /// Therefore the `i-th` column of `M(q)` can be obtained performing inverse
+  /// dynamics with an acceleration vector `v̇ = eᵢ`, with `eᵢ` the standard
+  /// (or natural) basis of `ℛⁿ` with n the number of generalized velocities.
+  /// We write this as: <pre>
+  ///   H.ᵢ(q) = M(q) * e_i
+  /// </pre>
+  /// where `H.ᵢ(q)` (notice the dot for the rows index) denotes the `i-th`
+  /// column in M(q).
+  ///
+  /// @warning This is an O(n²) algorithm. Avoid the explicit computation of the
+  /// mass matrix whenever possible.
+  void CalcMassMatrixViaInverseDynamics(
+      const systems::Context<T>& context, EigenPtr<MatrixX<T>> H) const {
+    tree().CalcMassMatrixViaInverseDynamics(context, H);
+  }
 
   // TODO(amcastro-tri): Add state accessors for free body spatial velocities.
 
@@ -1080,8 +2062,8 @@ class MultibodyPlant : public MultibodyTreeSystem<T> {
   /// @param[in] name
   ///   The name for the geometry. It must satisfy the requirements defined in
   ///   drake::geometry::GeometryInstance.
-  /// @param[in] material
-  ///   The visual material to assign to the geometry.
+  /// @param[in] properties
+  ///   The illustration properties for this geometry.
   /// @param[out] scene_graph
   ///   (Deprecated) A valid non nullptr to a SceneGraph on which geometry will
   ///   get registered.
@@ -1092,11 +2074,22 @@ class MultibodyPlant : public MultibodyTreeSystem<T> {
   geometry::GeometryId RegisterVisualGeometry(
       const Body<T>& body, const Isometry3<double>& X_BG,
       const geometry::Shape& shape, const std::string& name,
-      const geometry::VisualMaterial& material,
+      const geometry::IllustrationProperties& properties,
       geometry::SceneGraph<T>* scene_graph = nullptr);
 
-  /// Overload for visual geometry registration; it implicitly assigns the
-  /// default material.
+  /// Overload for visual geometry registration; it converts the `diffuse_color`
+  /// (RGBA with values in the range [0, 1]) into a
+  /// geometry::ConnectDrakeVisualizer()-compatible set of
+  /// geometry::IllustrationProperties.
+  geometry::GeometryId RegisterVisualGeometry(
+      const Body<T>& body, const Isometry3<double>& X_BG,
+      const geometry::Shape& shape, const std::string& name,
+      const Vector4<double>& diffuse_color,
+      geometry::SceneGraph<T>* scene_graph = nullptr);
+
+  /// Overload for visual geometry registration; it relies on the downstream
+  /// geometry::IllustrationProperties _consumer_ to provide default parameter
+  /// values (see @ref geometry_roles for details).
   geometry::GeometryId RegisterVisualGeometry(
       const Body<T>& body, const Isometry3<double>& X_BG,
       const geometry::Shape& shape, const std::string& name,
@@ -1410,6 +2403,44 @@ class MultibodyPlant : public MultibodyTreeSystem<T> {
     return tree().world_frame();
   }
 
+  /// Returns a constant reference to the body with unique index `body_index`.
+  /// @throws std::exception if `body_index` does not correspond to a body in
+  /// this model.
+  const Body<T>& get_body(BodyIndex body_index) const {
+    return tree().get_body(body_index);
+  }
+
+  /// Returns a constant reference to the joint with unique index `joint_index`.
+  /// @throws std::runtime_error when `joint_index` does not correspond to a
+  /// joint in this model.
+  const Joint<T>& get_joint(JointIndex joint_index) const {
+    return tree().get_joint(joint_index);
+  }
+
+  /// Returns a constant reference to the joint actuator with unique index
+  /// `actuator_index`.
+  /// @throws std::exception if `actuator_index` does not correspond to a joint
+  /// actuator in this tree.
+  const JointActuator<T>& get_joint_actuator(
+      JointActuatorIndex actuator_index) const {
+    return tree().get_joint_actuator(actuator_index);
+  }
+
+  /// Returns a constant reference to the frame with unique index `frame_index`.
+  /// @throws std::exception if `frame_index` does not correspond to a frame in
+  /// this plant.
+  const Frame<T>& get_frame(FrameIndex frame_index) const {
+    return tree().get_frame(frame_index);
+  }
+
+  /// Returns the name of a `model_instance`.
+  /// @throws std::logic_error when `model_instance` does not correspond to a
+  /// model in this model.
+  const std::string& GetModelInstanceName(
+      ModelInstanceIndex model_instance) const {
+    return tree().GetModelInstanceName(model_instance);
+  }
+
   /// Returns a constant reference to the underlying MultibodyTree model for
   /// `this` plant.
   /// @throws std::exception if called pre-finalize. See Finalize().
@@ -1604,6 +2635,14 @@ class MultibodyPlant : public MultibodyTreeSystem<T> {
   }
   /// @}
 
+  /// Sets default values in the context. For mobilizers, this method sets them
+  /// to their _zero_ state according to Mobilizer::set_zero_state().
+  void SetDefaultContext(systems::Context<T>* context) const {
+    DRAKE_MBP_THROW_IF_NOT_FINALIZED();
+    DRAKE_DEMAND(context != nullptr);
+    tree().SetDefaultContext(context);
+  }
+
   /// Sets the state in `context` so that generalized positions and velocities
   /// are zero.
   /// @throws std::exception if called pre-finalize. See Finalize().
@@ -1626,6 +2665,13 @@ class MultibodyPlant : public MultibodyTreeSystem<T> {
 
   // Friend class to facilitate testing.
   friend class MultibodyPlantTester;
+
+  // Constructor to bridge testing from MultibodyTree to MultibodyPlant.
+  // WARNING: This may *not* result in a plant with a valid state. Use
+  // sparingly to test forwarding methods when the overhead is high to
+  // reproduce the testing (e.g. benchmarks).
+  explicit MultibodyPlant(
+      std::unique_ptr<MultibodyTree<T>> tree_in, double time_step = 0);
 
   // Helper method for throwing an exception within public methods that should
   // not be called post-finalize. The invoking method should pass its name so
@@ -1759,7 +2805,6 @@ class MultibodyPlant : public MultibodyTreeSystem<T> {
       const Body<T>& body, const Isometry3<double>& X_BG,
       const geometry::Shape& shape,
       const std::string& name,
-      const optional<geometry::VisualMaterial>& material,
       geometry::SceneGraph<T>* scene_graph);
 
   bool body_has_registered_frame(const Body<T>& body) const {
@@ -2096,10 +3141,12 @@ class MultibodyPlant : public MultibodyTreeSystem<T> {
 /// @endcond
 
 #ifndef DRAKE_DOXYGEN_CXX
-// TODO(#9314) Deprecate and then remove this transitional namespace.
+// TODO(#9314) Remove this transitional namespace on or about 2019-03-01.
 namespace multibody_plant {
 template <typename T>
-using MultibodyPlant = ::drake::multibody::MultibodyPlant<T>;
+using MultibodyPlant
+    DRAKE_DEPRECATED("Spell as drake::multibody::MultibodyPlant instead.")
+    = ::drake::multibody::MultibodyPlant<T>;
 }  // namespace multibody_plant
 #endif  // DRAKE_DOXYGEN_CXX
 
